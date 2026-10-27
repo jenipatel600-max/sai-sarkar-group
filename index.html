@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sai Sarkar Group</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f4f7fb;
+      color: #222;
+    }
+    header {
+      background: #14532d;
+      color: white;
+      padding: 28px 16px;
+      text-align: center;
+    }
+    main {
+      max-width: 850px;
+      margin: 24px auto;
+      padding: 16px;
+    }
+    .card {
+      background: white;
+      padding: 20px;
+      margin-bottom: 20px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px #00000012;
+    }
+    input, button {
+      width: 100%;
+      padding: 12px;
+      margin-top: 10px;
+      border-radius: 7px;
+      font-size: 16px;
+    }
+    input { border: 1px solid #ccc; }
+    button {
+      border: 0;
+      background: #166534;
+      color: white;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; }
+    #gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }
+    #gallery img {
+      width: 100%;
+      height: 220px;
+      object-fit: cover;
+      border-radius: 9px;
+    }
+    .message { margin-top: 12px; }
+    footer {
+      text-align: center;
+      padding: 20px;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🏡 Sai Sarkar Group</h1>
+    <p>Our Society, Our Memories</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Share a Photo</h2>
+      <p>Enter your name and choose a society photo.
+        Your photo will appear after approval.</p>
+
+      <form id="uploadForm">
+        <label for="personName">Your name</label>
+        <input id="personName" type="text"
+          maxlength="80" required placeholder="Enter your name">
+
+        <label for="photoFile">Choose a photo</label>
+        <input id="photoFile" type="file"
+          accept="image/jpeg,image/png,image/webp" required>
+
+        <button id="submitBtn" type="submit">
+          Submit for Approval
+        </button>
+        <p id="message" class="message" role="status"></p>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Society Gallery</h2>
+      <p>Approved photos shared by our community.</p>
+      <div id="gallery">Loading photos...</div>
+    </section>
+  </main>
+
+  <footer>Made for Sai Sarkar Group ❤️</footer>
+
+  <script>
+    // Replace these three values with your actual details.
+    const PROJECT_URL = "YOUR_PROJECT_URL";
+    const PUBLISHABLE_KEY = "YOUR_PUBLISHABLE_KEY";
+    const BUCKET_NAME = "YOUR_BUCKET_NAME";
+
+    const ready =
+      !PROJECT_URL.startsWith("YOUR_") &&
+      !PUBLISHABLE_KEY.startsWith("YOUR_") &&
+      !BUCKET_NAME.startsWith("YOUR_");
+
+    const message = document.getElementById("message");
+    const form = document.getElementById("uploadForm");
+    const submitBtn = document.getElementById("submitBtn");
+    const gallery = document.getElementById("gallery");
+
+    if (!ready) {
+      gallery.textContent =
+        "Website setup is not finished yet.";
+      message.textContent =
+        "The website needs to be connected to Supabase.";
+    } else {
+      const db = window.supabase.createClient(
+        PROJECT_URL, PUBLISHABLE_KEY
+      );
+
+      async function loadGallery() {
+        gallery.textContent = "Loading photos...";
+
+        const { data, error } = await db
+          .from("photos")
+          .select("id, image_path, uploader_name")
+          .eq("status", "approved")
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          gallery.textContent =
+            "Could not load photos. Please try again later.";
+          return;
+        }
+
+        gallery.replaceChildren();
+
+        if (!data || data.length === 0) {
+          gallery.textContent =
+            "No approved photos yet. Check back soon!";
+          return;
+        }
+
+        for (const photo of data) {
+          const { data: image, error: imageError } =
+            await db.storage.from(BUCKET_NAME)
+              .createSignedUrl(photo.image_path, 3600);
+
+          if (imageError || !image?.signedUrl) continue;
+
+          const card = document.createElement("div");
+          const img = document.createElement("img");
+          img.src = image.signedUrl;
+          img.alt = "Society photo";
+          img.loading = "lazy";
+
+          const caption = document.createElement("p");
+          caption.textContent =
+            "Shared by " + (photo.uploader_name || "Society member");
+
+          card.append(img, caption);
+          gallery.append(card);
+        }
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const name = document.getElementById("personName")
+          .value.trim();
+        const file = document.getElementById("photoFile").files[0];
+
+        if (!name || !file) {
+          message.textContent = "Enter your name and choose a photo.";
+          return;
+        }
+
+        if (name.length > 80 || file.size > 5 * 1024 * 1024) {
+          message.textContent =
+            "Use a name under 80 characters and a photo under 5 MB.";
+          return;
+        }
+
+        if (!["image/jpeg", "image/png", "image/webp"]
+            .includes(file.type)) {
+          message.textContent =
+            "Please choose a JPG, PNG or WebP photo.";
+          return;
+        }
+
+        submitBtn.disabled = true;
+        message.textContent = "Submitting your photo...";
+
+        try {
+          const extension = ({
+            "image/jpeg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp"
+          })[file.type];
+
+          const path = crypto.randomUUID() + "." + extension;
+
+          const { error: uploadError } = await db.storage
+            .from(BUCKET_NAME)
+            .upload(path, file, {
+              contentType: file.type,
+              upsert: false
+            });
+
+          if (uploadError) throw uploadError;
+
+          const { error: rowError } = await db
+            .from("photos")
+            .insert({
+              title: file.name,
+              image_path: path,
+              uploader_name: name,
+              status: "pending"
+            });
+
+          if (rowError) {
+            message.textContent =
+              "The photo upload needs attention. Please contact the site administrator.";
+            return;
+          }
+
+          message.textContent =
+            "Submitted successfully! Your photo will appear after approval.";
+          form.reset();
+        } catch (error) {
+          console.error(error);
+          message.textContent =
+            "Submission failed. The website permissions may need setup.";
+        } finally {
+          submitBtn.disabled = false;
+        }
+      });
+
+      loadGallery();
+    }
+  </script>
+</body>
+</html>
